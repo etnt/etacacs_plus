@@ -29,7 +29,16 @@ init([]) ->
     SupFlags = #{strategy => one_for_all,
                  intensity => 0,
                  period => 1},
-    ChildSpecs = [],
+    ChildSpecs = [child_spec()],
     {ok, {SupFlags, ChildSpecs}}.
 
 %% internal functions
+
+child_spec() ->
+    #{id => etacacs_plus     % mandatory
+      , start => {etacacs_plus_server,start_link,[]} % mandatory
+      %%restart => restart(),   % optional
+      %%shutdown => shutdown(), % optional
+      %%type => worker(),       % optional
+      %%modules => modules()
+     }.   % optional
