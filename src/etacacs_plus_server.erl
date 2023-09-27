@@ -89,7 +89,9 @@
 -define(FINISHED, finished).
 -record(wstate,
         {
-         state = ?INIT
+         state = ?INIT,
+         user = -1,
+         user_data = []
         }).
 
 %%%===================================================================
@@ -131,6 +133,7 @@ init([]) ->
                     erlang:process_flag(trap_exit, true),
                     {ok, ListenSock} = gen_tcp:listen(get_port(),
                                                       [binary,
+                                                       {reuseaddr, true},
                                                        {active, false}]),
                     io:format("--- ~p: listening to port: ~p~n",[self(), get_port()]),
                     Lself = self(),
@@ -298,22 +301,18 @@ process_packet(Socket,
 
     ?debug("--- Sending reply packet: ~p~n",[Reply]),
     ok = gen_tcp:send(Socket, Reply),
-    State#wstate{state = ?GET_PASS};
+    State#wstate{state = ?GET_PASS,
+                 user  = Msg#start_authentication.user};
 %%
 process_packet(Socket,
-               #wstate{state = ?GET_PASS} = State,
+               #wstate{state = ?GET_PASS,
+                       user  = User} = State,
                #packet{msg = #authentication_continue{
                                 user_msg = Passwd
                                }
                       } = Req) ->
 
-    Status =
-        case Passwd of
-            <<"tacadmin">> ->
-                ?STATUS_PASS;
-            _ ->
-                ?STATUS_FAIL
-        end,
+    {Status, UserData} = login(User, Passwd),
 
     Flags = SrvMsgLen = DataLen = 0,
     ReplyBody = <<Status:8, Flags:8, SrvMsgLen:16, DataLen:16>>,
@@ -326,8 +325,16 @@ process_packet(Socket,
 
     ?debug("--- Sending reply packet (Status=~p): ~p~n",[Status,Reply]),
     ok = gen_tcp:send(Socket, Reply),
-    State#wstate{state = ?FINISHED}.
+    State#wstate{state     = ?FINISHED,
+                 user_data = UserData}.
 
+login(User, Passwd) ->
+    case etacacs_plus_db:login_user(User, Passwd) of
+        {ok, UserData} ->
+            {?STATUS_PASS, UserData};
+        _ ->
+            {?STATUS_FAIL, []}
+    end.
 
 %%
 %% Construct a packet (header + body)
