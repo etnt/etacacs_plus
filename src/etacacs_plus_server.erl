@@ -17,7 +17,7 @@
          terminate/2, code_change/3, format_status/2]).
 
 
-%%-define(DEBUG, true).
+-define(DEBUG, true).
 -ifdef(DEBUG).
 -define(debug(FmtStr,Args), io:format(FmtStr, Args)).
 -else.
@@ -49,6 +49,26 @@
 -define(CONTINUE_FLAG_ABORT, 16#1).
 -define(UNENCRYPTED_FLAG, 16#1).
 
+%% Authentication method used (when Authorizing)
+-define(METH_NOT_SET,    16#0).
+-define(METH_NONE,       16#1).
+-define(METH_KRB5,       16#2).
+-define(METH_LINE,       16#3).
+-define(METH_ENABLE,     16#4).
+-define(METH_LOCAL,      16#5).
+-define(METH_TACACSPLUS, 16#6).
+-define(METH_GUEST,      16#8).
+-define(METH_RADIUS,     16#10).
+-define(METH_KRB4,       16#11).
+-define(METH_RCMD,       16#20).
+
+
+%% Authorization status
+-define(AUTHOR_STATUS_PASS_ADD, 16#1).
+-define(AUTHOR_STATUS_FAIL, 16#10).
+-define(AUTHOR_STATUS_ERROR, 16#11).
+
+
 -define(is_set(Flags, Mask), ((Flags band Mask) > 0)).
 
 -record(packet,
@@ -77,6 +97,16 @@
         data
        }).
 
+-record(start_authorization,
+        { auth_method
+        , priv_lvl
+        , auth_type
+        , auth_service
+        , user
+        , port
+        , rem_addr
+        , args
+        }).
 
 -record(state,
         {
@@ -288,6 +318,34 @@ wloop(Socket, State) ->
 
 process_packet(Socket,
                #wstate{state = ?INIT} = State,
+               #packet{msg = Msg = #start_authorization{}} = Req) ->
+
+    ?debug("--- start_authorization msg: ~p~n",[Msg]),
+
+    Arg1 = <<"nso:group=admin private">>,  %% FIXME use the DB server!!
+    Arg1Len = size(Arg1),
+    ArgCnt = 1,
+    SrvMsgLen = DataLen = 0,
+    ReplyBody = <<?AUTHOR_STATUS_PASS_ADD:8,
+                  ArgCnt:8,
+                  SrvMsgLen:16,
+                  DataLen:16,
+                  Arg1Len:8,
+                  Arg1/binary>>,
+
+    Reply = mk_packet(?AUTHORIZATION,         % type
+                      Req#packet.seq_no + 1,
+                      0 ,                     % flags
+                      Req#packet.session_id,
+                      ReplyBody),
+
+    ?debug("--- Sending authorization reply packet: ~p~n",[Reply]),
+    ok = gen_tcp:send(Socket, Reply),
+    State#wstate{state = ?FINISHED,
+                 user  = Msg#start_authorization.user};
+%%
+process_packet(Socket,
+               #wstate{state = ?INIT} = State,
                #packet{msg = Msg = #start_authentication{}} = Req) ->
 
     Flags = SrvMsgLen = DataLen = 0,
@@ -429,6 +487,65 @@ obfuscate(<<B:8,Brest/binary>>, <<P:8,Prest/binary>>) ->
 
 
 decode_body(#wstate{state = ?INIT},
+            ?AUTHORIZATION,         % packet type
+            <<AuthMethod:8,
+              PrivLvl:8,
+              AuthType:8,
+              AuthService:8,
+              UserLen:8,
+              PortLen:8,
+              RemAddrLen:8,
+              ArgCnt:8,
+              Rest/binary
+            >>) ->
+
+    ?debug("  ------~n"
+           "  AuthMethod  = ~p~n"
+           "  PrivLvl     = ~p~n"
+           "  AuthType    = ~p~n"
+           "  AuthService = ~p~n"
+           "  UserLen     = ~p~n"
+           "  PortLen     = ~p~n"
+           "  RemAddrLen  = ~p~n"
+           "  ArgCnt      = ~p~n"
+           "  Rest        = ~p~n",
+           [auth_method_to_str(AuthMethod),
+            PrivLvl,
+            auth_type_to_str(AuthType),
+            auth_service_to_str(AuthService),
+            UserLen,
+            PortLen,
+            RemAddrLen,
+            ArgCnt,
+            Rest]),
+
+    {ArgLengths, Body} = get_arg_lengths(ArgCnt, Rest),
+
+    {Items, Left} =
+        lists:mapfoldl(
+          fun(Len, Bin) ->
+                  get_item(Len, Bin)
+          end,
+          Body,
+          [UserLen, PortLen, RemAddrLen | ArgLengths]),
+
+    ?debug("--- got Items: ~p~n",[Items]),
+
+    [User, Port, RemAddr | ArgsStrings] = Items,
+    Args = parse_args_strings(ArgsStrings),
+
+    #start_authorization{
+       auth_method  = AuthMethod,
+       priv_lvl     = PrivLvl,
+       auth_type    = AuthType,
+       auth_service = AuthService,
+       user         = User,
+       port         = Port,
+       rem_addr     = RemAddr,
+       args         = Args
+      };
+%%
+decode_body(#wstate{state = ?INIT},
             ?AUTHENTICATION,         % packet type
             <<Action:8,
               PrivLvl:8,
@@ -532,6 +649,28 @@ get_item(ItemLen, Bin) ->
     {Item, Rest}.
 
 
+%% Get all arg-len fields in an Authorization package.
+get_arg_lengths(ArgCnt, Rest) ->
+    get_arg_lengths(ArgCnt, Rest, []).
+
+get_arg_lengths(0, Rest, Acc) ->
+    {lists:reverse(Acc), Rest};
+get_arg_lengths(ArgCnt, <<Len:8, Rest/binary>>, Acc) ->
+    get_arg_lengths(ArgCnt - 1, Rest, [Len | Acc]).
+
+
+parse_args_strings([]) ->
+    [];
+parse_args_strings([H|T]) ->
+    case string:split(H, "=") of
+        [K,V] ->
+            [{K,V} | parse_args_strings(T)];
+        _ ->
+            ?debug("--- ignoring arg: ~p~n",[H]),
+            parse_args_strings(T)
+    end.
+
+
 %%
 %% The pad is generated by concatenating a series of MD5 hashes
 %% (each 16 bytes long) and truncating it to the length of the input data.
@@ -598,3 +737,15 @@ auth_service_to_str(6) -> "RCMD";
 auth_service_to_str(7) -> "X25";
 auth_service_to_str(8) -> "NASI";
 auth_service_to_str(9) -> "FWPROXY".
+
+auth_method_to_str(?METH_NOT_SET)    -> "NOT_SET";
+auth_method_to_str(?METH_NONE)       -> "NONE";
+auth_method_to_str(?METH_KRB5)       -> "KRB5";
+auth_method_to_str(?METH_LINE)       -> "LINE";
+auth_method_to_str(?METH_ENABLE)     -> "ENABLE";
+auth_method_to_str(?METH_LOCAL)      -> "LOCAL";
+auth_method_to_str(?METH_TACACSPLUS) -> "TACACSPLUS";
+auth_method_to_str(?METH_GUEST)      -> "GUEST";
+auth_method_to_str(?METH_RADIUS)     -> "RADIUS";
+auth_method_to_str(?METH_KRB4)       -> "KRB4";
+auth_method_to_str(?METH_RCMD)       -> "RCMD".
