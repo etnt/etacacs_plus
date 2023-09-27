@@ -11,6 +11,7 @@
 
 %% API
 -export([start_link/0,
+         authorize_user/2,
          login_user/2]).
 
 %% gen_server callbacks
@@ -43,6 +44,11 @@ start_link() ->
 login_user(User, Passwd)
   when is_binary(User) andalso is_binary(Passwd) ->
     gen_server:call(?SERVER, {login, to_atom(User), Passwd}).
+
+
+authorize_user(User, Args0) when is_binary(User) ->
+    Args = [{to_atom(K),to_atom(V)} || {K,V} <- Args0],
+    gen_server:call(?SERVER, {authorize, to_atom(User), Args}).
 
 
 to_atom(A) when is_atom(A)   -> A;
@@ -89,6 +95,10 @@ init([]) ->
 
 handle_call({login, User, Passwd}, _From, State) ->
     Reply = do_login(State#state.db, User, Passwd),
+    {reply, Reply, State};
+
+handle_call({authorize, User, Args}, _From, State) ->
+    Reply = do_authorize(State#state.db, User, Args),
     {reply, Reply, State};
 
 handle_call(_Request, _From, State) ->
@@ -184,6 +194,25 @@ do_login(DB, User, Passwd) ->
         _ ->
             {error, nopasswd}
     end.
+
+do_authorize(DB, User, Args) ->
+    L = [{U,D} || {user, U, D} <- DB,
+                  U == User],
+
+    {User, Data} = hd(L),  % just pick the first user...
+
+    io:format("--- Data: ~p~n",[Data]),
+
+    %% Hm...??
+    {service, Service} = lists:keyfind(service, 1, Args),
+
+    case lists:keyfind(service, 1, Data) of
+        {service, Service, ServiceData} ->
+            {ok, ServiceData};
+        _ ->
+            {error, nomatch}
+    end.
+
 
 match(X,X) ->
     true;
