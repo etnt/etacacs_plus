@@ -74,7 +74,8 @@ to_atom(B) when is_binary(B) ->
           ignore.
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, DB} = file:consult("etacacs_plus.conf"),
+    {ok, DbConfFile} = application:get_env(etacacs_plus, db_conf_file),
+    {ok, DB} = file:consult(DbConfFile),
     {ok, #state{db = DB}}.
 
 %%--------------------------------------------------------------------
@@ -195,6 +196,15 @@ do_login(DB, User, Passwd) ->
             {error, nopasswd}
     end.
 
+match(X,X) ->
+    true;
+match(X,L) when is_binary(X) andalso is_list(L) ->
+    match(X, list_to_binary(L));
+match(_,_) ->
+    false.
+
+
+
 do_authorize(DB, User, Args) ->
     L = [{U,D} || {user, U, D} <- DB,
                   U == User],
@@ -203,20 +213,40 @@ do_authorize(DB, User, Args) ->
 
     io:format("--- Data: ~p~n",[Data]),
 
-    %% Hm...??
+    %% NOTE: (atm) we only handle "service" authorization (i.e no "cmd" etc..)
     {service, Service} = lists:keyfind(service, 1, Args),
 
     case lists:keyfind(service, 1, Data) of
-        {service, Service, ServiceData} ->
+        {service, Service, ServiceData0} ->
+            ServiceData = prepare_authorized_data(ServiceData0),
             {ok, ServiceData};
         _ ->
             {error, nomatch}
     end.
 
+prepare_authorized_data([{groups,Gs} | T]) ->
+    [list_to_binary("groups="++string:join([to_list(X) || X <- Gs], " "))
+    | prepare_authorized_data(T)];
+%%
+prepare_authorized_data([{uid,Uid} | T]) ->
+    [list_to_binary("uid="++to_list(Uid))
+    | prepare_authorized_data(T)];
+%%
+prepare_authorized_data([{gid,Gid} | T]) ->
+    [list_to_binary("gid="++to_list(Gid))
+    | prepare_authorized_data(T)];
+%%
+prepare_authorized_data([{home,Home} | T]) ->
+    [list_to_binary("home"++to_list(Home))
+    | prepare_authorized_data(T)];
+%%
+prepare_authorized_data([_Ignore | T]) ->
+    prepare_authorized_data(T);
+%%
+prepare_authorized_data([]) ->
+    [].
 
-match(X,X) ->
-    true;
-match(X,L) when is_binary(X) andalso is_list(L) ->
-    match(X, list_to_binary(L));
-match(_,_) ->
-    false.
+to_list(L) when is_list(L)    -> L;
+to_list(A) when is_atom(A)    -> atom_to_list(A);
+to_list(I) when is_integer(I) -> integer_to_list(I);
+to_list(B) when is_binary(B)  -> binary_to_list(B).

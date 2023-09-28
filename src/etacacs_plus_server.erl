@@ -10,7 +10,9 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0,
+         db_conf_file/0
+        ]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -28,7 +30,6 @@
 -define(SERVER, ?MODULE).
 
 -define(PORT, 5049).
--define(SECRET_KEY, <<"tacacs123">>).
 
 %% Type of packet
 -define(AUTHENTICATION, 16#1).
@@ -110,6 +111,10 @@
 
 -record(state,
         {
+         key,
+         listen_ip,
+         port,
+         db_conf_file,
          lpid
         }).
 
@@ -120,6 +125,7 @@
 -record(wstate,
         {
          state = ?INIT,
+         key,
          user = -1,
          user_data = []
         }).
@@ -140,6 +146,9 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+db_conf_file() ->
+    gen_server:call(?SERVER, db_conf_file).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -157,20 +166,33 @@ start_link() ->
           ignore.
 init([]) ->
     erlang:process_flag(trap_exit, true),
+
+    {ok, Key0} = application:get_env(etacacs_plus, key),
+    {ok, ListenIp} = application:get_env(etacacs_plus, listen_ip),
+    {ok, Port} = application:get_env(etacacs_plus, port),
+    {ok, DbConfFile} = application:get_env(etacacs_plus, db_conf_file),
+    Key = list_to_binary(Key0),
+
     Self = self(),
     Pid = erlang:spawn_link(
             fun() ->
                     erlang:process_flag(trap_exit, true),
-                    {ok, ListenSock} = gen_tcp:listen(get_port(),
-                                                      [binary,
+                    {ok, ListenSock} = gen_tcp:listen(Port,
+                                                      [{ip, ListenIp},
                                                        {reuseaddr, true},
+                                                       binary,
                                                        {active, false}]),
-                    io:format("--- ~p: listening to port: ~p~n",[self(), get_port()]),
+                    ?debug("--- ~p: listening to port: ~p~n",[self(), Port]),
                     Lself = self(),
-                    Apid = spawn_link(fun() -> acceptor(Lself, ListenSock) end),
-                    lloop(Self, Apid, ListenSock)
+                    Apid = spawn_link(fun() -> acceptor(Lself, Key, ListenSock) end),
+                    lloop(Self, Key, ListenSock, Apid)
             end),
-    {ok, #state{lpid = Pid}}.
+
+    {ok, #state{key          = Key,
+                listen_ip    = ListenIp,
+                port         = Port,
+                db_conf_file = DbConfFile,
+                lpid         = Pid}}.
 
 
 %%--------------------------------------------------------------------
@@ -188,6 +210,11 @@ init([]) ->
           {noreply, NewState :: term(), hibernate} |
           {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
           {stop, Reason :: term(), NewState :: term()}.
+
+handle_call(db_conf_file, _From, State) ->
+    Reply = {ok, State#state.db_conf_file},
+    {reply, Reply, State};
+%%
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -267,35 +294,30 @@ format_status(_Opt, Status) ->
 %%
 %% Listen server
 %%
-lloop(Controller, Acceptor, ListenSock) ->
+lloop(Controller, Key, ListenSock, Acceptor) ->
     receive
         {Acceptor, connected} ->
             Self = self(),
-            Apid = spawn_link(fun() -> acceptor(Self, ListenSock) end),
-            lloop(Self, Apid, ListenSock);
+            Apid = spawn_link(fun() -> acceptor(Self, Key, ListenSock) end),
+            lloop(Self, Key, ListenSock, Apid);
 
         {'EXIT', Acceptor, _Reason} ->
             Self = self(),
-            Apid = spawn_link(fun() -> acceptor(Self, ListenSock) end),
-            lloop(Self, Apid, ListenSock);
+            Apid = spawn_link(fun() -> acceptor(Self, Key, ListenSock) end),
+            lloop(Self, Key, ListenSock, Apid);
 
         {'EXIT', Controller, _Reason} ->
             exit(shutdown)
     end.
 
-get_port() ->
-    ?PORT.
-
-secret_key() ->
-    ?SECRET_KEY.
 
 %%
 %% Worker process
 %%
-acceptor(LPid, ListenSocket) ->
+acceptor(LPid, Key, ListenSocket) ->
     {ok, Socket} = gen_tcp:accept(ListenSocket),
     LPid ! {self(), connected},
-    wloop(Socket, #wstate{}).
+    wloop(Socket, #wstate{key = Key}).
 
 wloop(Socket, #wstate{state = ?FINISHED}) ->
     ?debug("--- worker ~p finished!~n",[self()]),
@@ -317,27 +339,53 @@ wloop(Socket, State) ->
     end.
 
 process_packet(Socket,
-               #wstate{state = ?INIT} = State,
+               #wstate{state = ?INIT, key = Key} = State,
                #packet{msg = Msg = #start_authorization{}} = Req) ->
 
     ?debug("--- start_authorization msg: ~p~n",[Msg]),
 
-    Arg1 = <<"nso:group=admin private">>,  %% FIXME use the DB server!!
-    Arg1Len = size(Arg1),
-    ArgCnt = 1,
     SrvMsgLen = DataLen = 0,
-    ReplyBody = <<?AUTHOR_STATUS_PASS_ADD:8,
-                  ArgCnt:8,
-                  SrvMsgLen:16,
-                  DataLen:16,
-                  Arg1Len:8,
-                  Arg1/binary>>,
+    User = Msg#start_authorization.user,
+    Args0 = Msg#start_authorization.args,
 
-    Reply = mk_packet(?AUTHORIZATION,         % type
+    Body = case etacacs_plus_db:authorize_user(User, Args0) of
+               {ok, AData} ->
+                   %% Example of AData content:
+                   %%
+                   %%  [<<"groups=admin netadmin private">>,
+                   %%   <<"uid=1000">>,
+                   %%   <<"gid=100">>,
+                   %%   <<"home=/tmp">>]
+                   %%
+                   ?debug("--- AData: ~p~n",[AData]),
+                   ArgCnt = erlang:length(AData),
+                   BodyHead = <<?AUTHOR_STATUS_PASS_ADD:8,
+                                ArgCnt:8,
+                                SrvMsgLen:16,
+                                DataLen:16>>,
+                   ArgLenBin = lists:foldr(
+                                 fun(Len, Acc) ->
+                                         <<Len:8,Acc/binary>>
+                                 end, <<"">>, [size(A) || A <- AData]),
+                   ArgBin = lists:foldr(
+                              fun(Arg, Acc) ->
+                                      <<Arg/binary,Acc/binary>>
+                              end, <<"">>, AData),
+                   <<BodyHead/binary, ArgLenBin/binary, ArgBin/binary>>;
+               _ ->
+                   ArgCnt = 0,
+                   <<?AUTHOR_STATUS_FAIL:8,
+                     ArgCnt:8,
+                     SrvMsgLen:16,
+                     DataLen:16>>
+           end,
+
+    Reply = mk_packet(Key,
+                      ?AUTHORIZATION,         % type
                       Req#packet.seq_no + 1,
                       0 ,                     % flags
                       Req#packet.session_id,
-                      ReplyBody),
+                      Body),
 
     ?debug("--- Sending authorization reply packet: ~p~n",[Reply]),
     ok = gen_tcp:send(Socket, Reply),
@@ -345,13 +393,14 @@ process_packet(Socket,
                  user  = Msg#start_authorization.user};
 %%
 process_packet(Socket,
-               #wstate{state = ?INIT} = State,
+               #wstate{state = ?INIT, key = Key} = State,
                #packet{msg = Msg = #start_authentication{}} = Req) ->
 
     Flags = SrvMsgLen = DataLen = 0,
     ReplyBody = <<?STATUS_GETPASS:8, Flags:8, SrvMsgLen:16, DataLen:16>>,
 
-    Reply = mk_packet(?AUTHENTICATION,        % type
+    Reply = mk_packet(Key,
+                      ?AUTHENTICATION,        % type
                       Req#packet.seq_no + 1,
                       0 ,                     % flags
                       Req#packet.session_id,
@@ -364,6 +413,7 @@ process_packet(Socket,
 %%
 process_packet(Socket,
                #wstate{state = ?GET_PASS,
+                       key   = Key,
                        user  = User} = State,
                #packet{msg = #authentication_continue{
                                 user_msg = Passwd
@@ -375,7 +425,8 @@ process_packet(Socket,
     Flags = SrvMsgLen = DataLen = 0,
     ReplyBody = <<Status:8, Flags:8, SrvMsgLen:16, DataLen:16>>,
 
-    Reply = mk_packet(?AUTHENTICATION,        % type
+    Reply = mk_packet(Key,
+                      ?AUTHENTICATION,        % type
                       Req#packet.seq_no + 1,
                       0 ,                     % flags
                       Req#packet.session_id,
@@ -397,12 +448,12 @@ login(User, Passwd) ->
 %%
 %% Construct a packet (header + body)
 %%
-mk_packet(Type, SeqNo, Flags, SessionId, UnhashedBody) ->
+mk_packet(Key, Type, SeqNo, Flags, SessionId, UnhashedBody) ->
     BodyLen = size(UnhashedBody),
     Version = <<16#c:4, 0:4>>,
     PseudoPad = pseudo_pad(BodyLen,
                            <<SessionId:32>>,
-                           secret_key(),
+                           Key,
                            Version,
                            <<SeqNo:8>>),
 
@@ -420,7 +471,7 @@ mk_packet(Type, SeqNo, Flags, SessionId, UnhashedBody) ->
 %%
 %% Decode a packet (header + body)
 %%
-decode_packet(State,
+decode_packet(#wstate{key = Key} = State,
               <<MajVsn:4,     % major TACACS+ version number (0xc)
                 MinVsn:4,     % minor TACACS+ version number
                 %%              default (0x0) , one (0x1)
@@ -454,7 +505,7 @@ decode_packet(State,
     Version = <<MajVsn:4, MinVsn:4>>,
     PseudoPad = pseudo_pad(Length,
                            <<SessionId:32>>,
-                           secret_key(),
+                           Key,
                            Version,
                            <<SeqNo:8>>),
 
