@@ -211,8 +211,6 @@ do_authorize(DB, User, Args) ->
 
     {User, Data} = hd(L),  % just pick the first user...
 
-    io:format("--- Data: ~p~n",[Data]),
-
     %% NOTE: (atm) we only handle "service" authorization (i.e no "cmd" etc..)
     {service, Service} = lists:keyfind(service, 1, Args),
 
@@ -237,7 +235,7 @@ prepare_authorized_data([{gid,Gid} | T]) ->
     | prepare_authorized_data(T)];
 %%
 prepare_authorized_data([{home,Home} | T]) ->
-    [list_to_binary("home"++to_list(Home))
+    [list_to_binary("home="++to_list(Home))
     | prepare_authorized_data(T)];
 %%
 prepare_authorized_data([_Ignore | T]) ->

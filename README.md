@@ -79,7 +79,7 @@ Using the TACACS+ Python client in: https://github.com/ansible/tacacs_plus
       groups=admin netadmin private
       uid=1000
       gid=100
-      home/tmp
+      home=/tmp
       
 
     # Authorize the use of (the unknown) service: hello
@@ -87,4 +87,30 @@ Using the TACACS+ Python client in: https://github.com/ansible/tacacs_plus
                     -u tacadmin authorize  -c service=hello
     status: FAIL
 
+## Logging
 
+If you run the `etacacs_plus` release script then logging
+works out of the box. To get logging to work with the
+`rebar3 shell` command you need to start it as:
+
+    ERL_FLAGS="-kernel logger_level info" rebar3 shell
+
+Under the `log` directory you will find disk_log
+files named: `etacacs_plus.log`. The logged content
+will look like this (some date info abbreviated here,
+and with some new line formatting):
+
+    2023-09-29T08:53:27.979046+02:00 info: msg: etacacs_plus starting
+    2023-... info: authentication: PASS, user: tacadmin
+    2023-... info: authentication: FAIL, user: tacadmin
+    2023-... info: authorization: PASS, in_data: service=nso, \
+                                        out_data: groups=admin netadmin private \
+                                                  uid=1000 gid=100 home=/tmp, \
+                                        user: tacadmin
+    2023-... info: authorization: FAIL, in_data: service=hello, user: tacadmin
+
+## Resources
+
+* https://datatracker.ietf.org/doc/html/rfc8907
+* https://ferd.ca/erlang-otp-21-s-new-logger.html
+* https://rebar3.org/docs/
