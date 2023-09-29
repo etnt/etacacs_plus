@@ -11,7 +11,6 @@
 
 %% API
 -export([start_link/0,
-         db_conf_file/0,
          log_filter/2
         ]).
 
@@ -99,9 +98,6 @@
           ignore.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-db_conf_file() ->
-    gen_server:call(?SERVER, db_conf_file).
 
 
 %% We want to filter out all log messages that are
@@ -199,10 +195,6 @@ init([]) ->
           {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
           {stop, Reason :: term(), NewState :: term()}.
 
-handle_call(db_conf_file, _From, State) ->
-    Reply = {ok, State#state.db_conf_file},
-    {reply, Reply, State};
-%%
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.

@@ -112,5 +112,6 @@ and with some new line formatting):
 ## Resources
 
 * https://datatracker.ietf.org/doc/html/rfc8907
+* https://github.com/ansible/tacacs_plus
 * https://ferd.ca/erlang-otp-21-s-new-logger.html
 * https://rebar3.org/docs/
