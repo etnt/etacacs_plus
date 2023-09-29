@@ -378,9 +378,11 @@ process_packet(Socket,
 
     %% Log the reply
     UserStr = binary_to_list(User),
-    InDataStr = [binary_to_list(X)++"="++binary_to_list(Y)
-                 || {X,Y} <- Args,
-                    is_binary(X) andalso is_binary(Y)],
+    InDataStr = string:join(
+                  [binary_to_list(X)++"="++binary_to_list(Y)
+                   || {X,Y} <- Args,
+                      is_binary(X) andalso is_binary(Y)],
+                  " "),
     if Success ->
             ReturnedDataStr = string:join([binary_to_list(X)
                                            || X <- ReturnedData],

@@ -18,6 +18,10 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
+%%-define(DEBUG, true).
+-include("etacacs_plus.hrl").
+
+
 -define(SERVER, ?MODULE).
 
 -record(state,
@@ -43,12 +47,15 @@ start_link() ->
 
 login_user(User, Passwd)
   when is_binary(User) andalso is_binary(Passwd) ->
-    gen_server:call(?SERVER, {login, to_atom(User), Passwd}).
+    UserStr = string:trim(binary_to_list(User), both, "\n"),
+    PasswdStr = string:trim(binary_to_list(Passwd), both, "\n"),
+    gen_server:call(?SERVER, {login, to_atom(UserStr), PasswdStr}).
 
 
 authorize_user(User, Args0) when is_binary(User) ->
+    UserStr = string:trim(binary_to_list(User), both, "\n"),
     Args = [{to_atom(K),to_atom(V)} || {K,V} <- Args0],
-    gen_server:call(?SERVER, {authorize, to_atom(User), Args}).
+    gen_server:call(?SERVER, {authorize, to_atom(UserStr), Args}).
 
 
 to_atom(A) when is_atom(A)   -> A;
@@ -179,10 +186,13 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 
 do_login(DB, User, Passwd) ->
+    ?debug("--- DB do_login, User=~p , Passwd=~p , DB=~p~n",[User,Passwd,DB]),
     L = [{U,D} || {user, U, D} <- DB,
                   U == User],
 
     {User, Data} = hd(L),  % just pick the first user...
+
+    ?debug("--- DB do_login, User=~p , Data=~p~n",[User,Data]),
 
     case lists:keyfind(login, 1, Data) of
         {login, {cleartext, Str}} ->
