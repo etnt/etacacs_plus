@@ -89,12 +89,6 @@ Using the TACACS+ Python client in: https://github.com/ansible/tacacs_plus
 
 ## Logging
 
-If you run the `etacacs_plus` release script then logging
-works out of the box. To get logging to work with the
-`rebar3 shell` command you need to start it as:
-
-    ERL_FLAGS="-kernel logger_level info" rebar3 shell
-
 Under the `log` directory you will find disk_log
 files named: `etacacs_plus.log`. The logged content
 will look like this (some date info abbreviated here,
