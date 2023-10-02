@@ -1,6 +1,6 @@
 {application, etacacs_plus,
  [{description, "A simple TACACS+ server"},
-  {vsn, "0.1.2"},
+  {vsn, "0.1.3"},
   {registered, []},
   {mod, {etacacs_plus_app, []}},
   {applications,

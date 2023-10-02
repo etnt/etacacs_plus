@@ -74,6 +74,7 @@
 %% Worker state
 -define(INIT, init).
 -define(GET_PASS, get_pass).
+-define(GET_USER, get_user).
 -define(FINISHED, finished).
 -record(wstate,
         {
@@ -318,6 +319,9 @@ wloop(Socket, State) ->
 
     end.
 
+%%
+%% AUTHORIZATION
+%%
 process_packet(Socket,
                #wstate{state = ?INIT, key = Key} = State,
                #packet{msg = Msg = #start_authorization{}} = Req) ->
@@ -402,12 +406,60 @@ process_packet(Socket,
     State#wstate{state = ?FINISHED,
                  user  = Msg#start_authorization.user};
 %%
+%% AUTHENTICATION - request User
+%%
+%% Authentication as been initiated but no User was given
+%% so we need to request a 'User' to be supplied!
+%%
 process_packet(Socket,
                #wstate{state = ?INIT, key = Key} = State,
-               #packet{msg = Msg = #start_authentication{}} = Req) ->
+               #packet{msg = #start_authentication{
+                                user = User
+                               }
+                      } = Req
+              ) ->
+
+    {ReplyMsg, NextState} =
+        if (User == undefined) ->
+                {?STATUS_GETUSER, ?GET_USER};
+           true ->
+                {?STATUS_GETPASS, ?GET_PASS}
+        end,
+
+    ?debug("--- State=~p , NextState=~p , User=~p~n",[?INIT,NextState,User]),
+
+    Flags = SrvMsgLen = DataLen = 0,
+    ReplyBody = <<ReplyMsg:8, Flags:8, SrvMsgLen:16, DataLen:16>>,
+
+    Reply = mk_packet(Key,
+                      ?AUTHENTICATION,        % type
+                      Req#packet.seq_no + 1,
+                      0 ,                     % flags
+                      Req#packet.session_id,
+                      ReplyBody),
+
+    ?debug("--- Sending reply packet: ~p~n",[Reply]),
+    ok = gen_tcp:send(Socket, Reply),
+    State#wstate{state = NextState,
+                 user  = User};
+%%
+%% AUTHENTICATION - request Password
+%%
+%% Authentication as been initiated but no Password was given
+%% so we need to request a 'Password' to be supplied!
+%%
+process_packet(Socket,
+               #wstate{state = ?GET_USER, key = Key} = State,
+               #packet{msg = #authentication_continue{
+                                user_msg = User
+                               }
+                      } = Req) ->
+
 
     Flags = SrvMsgLen = DataLen = 0,
     ReplyBody = <<?STATUS_GETPASS:8, Flags:8, SrvMsgLen:16, DataLen:16>>,
+
+    ?debug("--- State=~p , User=~p~n",[?GET_USER,User]),
 
     Reply = mk_packet(Key,
                       ?AUTHENTICATION,        % type
@@ -419,7 +471,13 @@ process_packet(Socket,
     ?debug("--- Sending reply packet: ~p~n",[Reply]),
     ok = gen_tcp:send(Socket, Reply),
     State#wstate{state = ?GET_PASS,
-                 user  = Msg#start_authentication.user};
+                 user  = User};
+%%
+%% AUTHENTICATION - finish
+%%
+%% Authentication are in progress, we have got a User and Password
+%% which will be tried against our DB; depending on the outcome,
+%% a PASS- or FAIL reply will be returned to the client.
 %%
 process_packet(Socket,
                #wstate{state = ?GET_PASS,
@@ -607,8 +665,12 @@ decode_body(#wstate{state = ?INIT},
 
     ?debug("--- got Items: ~p~n",[Items]),
 
-    [User, Port, RemAddr | ArgsStrings] = Items,
+    [User0, Port, RemAddr | ArgsStrings] = Items,
     Args = parse_args_strings(ArgsStrings),
+
+    User = if (UserLen == 0) -> undefined;
+              true           -> User0
+           end,
 
     #start_authorization{
        auth_method  = AuthMethod,
@@ -681,6 +743,40 @@ decode_body(#wstate{state = ?INIT},
                           rem_addr = RemAddr,
                           data = Data
                          };
+%%
+decode_body(#wstate{state = ?GET_USER},
+            ?AUTHENTICATION,         % packet type
+            <<UserMsgLen:16,
+              DataLen:16,
+              Flags:8,
+              Rest/binary
+            >>) ->
+
+    if ?is_set(Flags, ?CONTINUE_FLAG_ABORT) ->
+            ?debug("...ABORTING...~n",[]),
+            exit(abort); % FIXME do something better...
+        true ->
+            true
+    end,
+
+    {Items, _Left} =
+        lists:mapfoldl(
+          fun(Len, Bin) ->
+                  get_item(Len, Bin)
+          end,
+          Rest,
+          [UserMsgLen, DataLen]),
+
+    [UserMsg,Data] = Items,
+
+    ?debug("  ------~n"
+           "  User    = ~p~n"
+           "  Data    = ~p~n",
+           [UserMsg , Data]),
+
+    #authentication_continue{state = ?GET_USER,
+                             user_msg = UserMsg,
+                             data = Data};
 %%
 decode_body(#wstate{state = ?GET_PASS},
             ?AUTHENTICATION,         % packet type
