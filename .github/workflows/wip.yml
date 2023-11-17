@@ -21,9 +21,9 @@ jobs:
       with:
         python-version: "3.8"
     - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install tacacs_plus
+      uses: py-actions/py-dependency-install@v4
+      with:
+        path: ".github/workflows/requirements.txt"
     - name: Setup etacacs_plus
       uses: actions/checkout@v3
       - run: rebar3 ct
