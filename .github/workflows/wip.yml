@@ -23,6 +23,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
+      run: |
         pip install tacacs_plus
     - name: Setup etacacs_plus
       uses: actions/checkout@v3
