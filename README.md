@@ -15,6 +15,9 @@ is primarily intended for testing of TACACS+ enabled applications.
 ``` shell
 $ rebar3 compile
 ```
+
+It will build for OTP-21 to OTP-24 using rebar3 3.14.3 and
+build for OTP-25 and later using rebar3 3.22.1.
     
 ## Run
 
