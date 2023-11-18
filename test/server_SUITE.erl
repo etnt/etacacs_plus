@@ -236,7 +236,7 @@ start_stop_server(_Config) ->
 
     %% Start the server and give it some runtime
     ok = application:start(etacacs_plus),
-    erlang:yield(),
+    timer:sleep(1000),
 
     %% Verify the server is up and running
     Msg = hello,
@@ -246,8 +246,9 @@ start_stop_server(_Config) ->
     IpPortState = ip_port_state(),
     ?assertEqual(true, is_listening({0,0,0,0}, 5049, IpPortState)),
 
+    %% Stop the server and give it some runtime
     application:stop(etacacs_plus),
-    erlang:yield(),
+    timer:sleep(1000),
 
     %% Verify that the server is *not* listening
     IpPortState2 = ip_port_state(),
