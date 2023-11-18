@@ -11,6 +11,10 @@
 -compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
+-define(SERVER, etacacs_plus_server).
+
 
 %%--------------------------------------------------------------------
 %% COMMON TEST CALLBACK FUNCTIONS
@@ -52,6 +56,12 @@ suite() ->
 %% @end
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
+    ok = write_config("db.conf"),
+    ok = application:load(etacacs_plus),
+    ok = application:set_env(etacacs_plus, listen_ip, {0,0,0,0}),
+    ok = application:set_env(etacacs_plus, port, 5049),
+    ok = application:set_env(etacacs_plus, key, "tacacs123"),
+    ok = application:set_env(etacacs_plus, db_conf_file, "db.conf"),
     Config.
 
 %%--------------------------------------------------------------------
@@ -181,7 +191,7 @@ groups() ->
 %% @end
 %%--------------------------------------------------------------------
 all() ->
-    [my_test_case].
+    [start_stop_server].
 
 
 %%--------------------------------------------------------------------
@@ -202,7 +212,7 @@ all() ->
 %% @spec TestCase() -> Info
 %% @end
 %%--------------------------------------------------------------------
-my_test_case() ->
+start_stop_server() ->
     [].
 
 %%--------------------------------------------------------------------
@@ -222,7 +232,27 @@ my_test_case() ->
 %%           {save_config,Config1} | {skip_and_save,Reason,Config1}
 %% @end
 %%--------------------------------------------------------------------
-my_test_case(_Config) ->
+start_stop_server(_Config) ->
+
+    %% Start the server and give it some runtime
+    ok = application:start(etacacs_plus),
+    erlang:yield(),
+
+    %% Verify the server is up and running
+    Msg = hello,
+    ?assertEqual(ok, gen_server:call(?SERVER, Msg)),
+
+    %% Verify that the server is listening
+    IpPortState = ip_port_state(),
+    ?assertEqual(true, is_listening({0,0,0,0}, 5049, IpPortState)),
+
+    application:stop(etacacs_plus),
+    erlang:yield(),
+
+    %% Verify that the server is *not* listening
+    IpPortState2 = ip_port_state(),
+    ?assertEqual(false, is_listening({0,0,0,0}, 5049, IpPortState2)),
+
     ok.
 
 
@@ -230,6 +260,22 @@ my_test_case(_Config) ->
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
+
+is_listening(Ip, Port, [{Ip, Port, States} | Tail]) ->
+    case lists:member(listen, States) of
+        true ->
+            true;
+        false ->
+            is_listening(Ip, Port, Tail)
+    end;
+is_listening(Ip, Port, [_ | Tail]) ->
+    is_listening(Ip, Port, Tail);
+is_listening(_, _, []) ->
+    false.
+
+
+
+
 
 %%
 %% ip_port_state/1
@@ -262,3 +308,67 @@ port_list(Name) ->
 		  _ -> false
 	      end
       end, erlang:ports()).
+
+
+
+write_config(Fname) ->
+    write_config(Fname, config()).
+
+write_config(Fname, Config) ->
+    {ok, Fd} = file:open(Fname, [write]),
+    try
+        ok = io:fwrite(Fd, "~p.~n", [Config])
+    after
+        file:close(Fd)
+    end.
+
+
+config() ->
+[{user, tacadmin,
+ [{login, {cleartext, "tacadmin"}},
+  {service, nso,
+   [{groups, [admin, netadmin, private]},
+    {uid, 1000},
+    {gid, 100},
+    {home, "/tmp"}
+   ]
+  },
+  {member, [netadmin]}
+ ]
+},
+{user, tester,
+ [{login, {cleartext, "tester"}},
+  {service, nso,
+   [{groups, [admin, private]},
+    {uid, 1001},
+    {gid, 101},
+    {home, "/home/tester"}
+   ]
+  },
+  {member, admin}
+ ]
+},
+{user, operator,
+ [{login, {cleartext, "operator"}},
+  {service, nso,
+   [{groups, [oper, public]},
+    {uid, 1002},
+    {gid, 102},
+    {home, "/operator"}
+   ]
+  },
+  {member, oper}
+ ]
+},
+{user, admin,
+ [{login, {cleartext, "blaffa"}},
+  {service, nso,
+   [{groups, [admin]},
+    {uid, 1003},
+    {gid, 103},
+    {home, "/tmp"}
+   ]
+  },
+  {member, oper}
+ ]
+}].
