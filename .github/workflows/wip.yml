@@ -1,29 +1,41 @@
-name: tacacs_client
+name: Test the etacacs_plus server
 
 on: push
 
 jobs:
   test:
     runs-on: ubuntu-20.04
+    defaults:
+      run:
+        working-directory: .
+
     name: Erlang/OTP ${{matrix.otp}} / rebar3 ${{matrix.rebar3}}
     strategy:
       matrix:
         otp: ['25.2']
         rebar3: ['3.22.1']
+
+    env:
+      NODENAME: "bill"
+
     steps:
-    - name: Set up Erlang ${{ matrix.python-version }}
-      uses: erlef/setup-beam@v1
-      with:
-        otp-version: ${{matrix.otp}}
-        rebar3-version: ${{matrix.rebar3}}
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: "3.8"
-    - name: Install Python dependencies
-      uses: py-actions/py-dependency-install@v4
-      with:
-        path: ".github/workflows/requirements.txt"
-    - name: Setup etacacs_plus
-      uses: actions/checkout@v3
-      - run: rebar3 ct
+      -  uses: actions/checkout@v3
+
+      - name: Set up Erlang ${{ matrix.otp }}
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.otp}}
+          rebar3-version: ${{matrix.rebar3}}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.8"
+
+      - name: Install Python dependencies
+        uses: py-actions/py-dependency-install@v4
+        with:
+          path: "test/requirements.txt"
+
+      - name: Run the test
+        run: rebar3 ct
