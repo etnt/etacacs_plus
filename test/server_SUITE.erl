@@ -224,3 +224,41 @@ my_test_case() ->
 %%--------------------------------------------------------------------
 my_test_case(_Config) ->
     ok.
+
+
+
+%%--------------------------------------------------------------------
+%% Helpers
+%%--------------------------------------------------------------------
+
+%%
+%% ip_port_state/1
+%%
+%% Example:
+%% 1> ip_port_state().
+%% [{{0,0,0,0},44679,[accepting,listen,open]},
+%%  {{127,0,0,1},48530,[connected,open]},
+%%  {{127,0,0,1},9999,[accepting,listen,open]}]
+%%
+ip_port_state() ->
+    TcpSockets = tcp_sockets(),
+    ok([{prim_inet:sockname(S),prim_inet:getstatus(S)} || S <- TcpSockets]).
+
+%% Unbox and remove non-ok values
+ok([{{ok,{IP,Port}},{ok,State}} | Tail]) -> [{IP,Port,State} | ok(Tail)];
+ok([_ | Tail])                           -> ok(Tail);
+ok([])                                   -> [].
+
+%% Return a list of all tcp sockets
+tcp_sockets() ->
+    port_list("tcp_inet").
+
+%% Return all ports having the name 'Name'
+port_list(Name) ->
+    lists:filter(
+      fun(Port) ->
+	      case erlang:port_info(Port, name) of
+		  {name, Name} -> true;
+		  _ -> false
+	      end
+      end, erlang:ports()).
