@@ -1,4 +1,4 @@
-name: etacacs_plus-server
+name: CI
 
 on: push
 
