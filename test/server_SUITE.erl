@@ -191,7 +191,9 @@ groups() ->
 %% @end
 %%--------------------------------------------------------------------
 all() ->
-    [start_stop_server].
+    [ start_stop_server
+    , authenticate
+    ].
 
 
 %%--------------------------------------------------------------------
@@ -258,6 +260,24 @@ start_stop_server(_Config) ->
 
 
 
+authenticate(_Config) ->
+
+    %% Start the server and give it some runtime
+    ok = application:start(etacacs_plus),
+    timer:sleep(1000),
+
+    X = os:cmd("tacacs_client -v -H 127.0.0.1 -p 5049 -k tacacs123 "
+               "-u tacadmin authenticate  --password tacadmin"),
+
+    ?assertEqual("status: PASS\n", X),
+
+    %% Stop the server and give it some runtime
+    application:stop(etacacs_plus),
+    timer:sleep(1000),
+
+    ok.
+
+
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
@@ -318,7 +338,8 @@ write_config(Fname) ->
 write_config(Fname, Config) ->
     {ok, Fd} = file:open(Fname, [write]),
     try
-        ok = io:fwrite(Fd, "~p.~n", [Config])
+        [io:fwrite(Fd, "~p.~n", [C]) || C <- Config],
+        ok
     after
         file:close(Fd)
     end.

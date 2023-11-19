@@ -1,4 +1,4 @@
-name: Test the etacacs_plus server
+name: etacacs_plus-server
 
 on: push
 
@@ -38,4 +38,4 @@ jobs:
           path: "test/requirements.txt"
 
       - name: Run the test
-        run: rebar3 ct
+        run: rebar3 ct --config config/etacacs_plus.config
