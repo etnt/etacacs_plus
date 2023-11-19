@@ -193,6 +193,7 @@ groups() ->
 all() ->
     [ start_stop_server
     , authenticate
+    , authorize
     ].
 
 
@@ -276,6 +277,39 @@ authenticate(_Config) ->
     timer:sleep(1000),
 
     ok.
+
+authorize(_Config) ->
+
+    %% Start the server and give it some runtime
+    ok = application:start(etacacs_plus),
+    timer:sleep(1000),
+
+    %% Authorize the use of service: nso
+    X = os:cmd("tacacs_client -v -H 127.0.0.1 -p 5049 -k tacacs123 "
+               "-u tacadmin authorize  -c service=nso"),
+
+    ?assertEqual("status: PASS\n"
+                 "av-pairs:\n"
+                 "  groups=admin netadmin private\n"
+                 "  uid=1000\n"
+                 "  gid=100\n"
+                 "  home=/tmp\n"
+                 , X),
+
+    %% Authorize the use of (the unknown) service: hello
+    Y = os:cmd("tacacs_client -v -H 127.0.0.1 -p 5049 -k tacacs123 "
+               "-u tacadmin authorize  -c service=hello"),
+
+    ?assertEqual("status: FAIL\n", Y),
+
+    %% Stop the server and give it some runtime
+    application:stop(etacacs_plus),
+    timer:sleep(1000),
+
+    ok.
+
+
+
 
 
 %%--------------------------------------------------------------------
